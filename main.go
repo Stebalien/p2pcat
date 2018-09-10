@@ -39,15 +39,6 @@ var Info = log.New(ioutil.Discard, "I: ", 0)
 var Error = log.New(os.Stderr, "E: ", 0)
 
 func main() {
-	if err := connect(); err != nil {
-		Error.Fatal(err)
-	}
-}
-
-func connect() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	var flags flag.FlagSet
 	flags.Usage = func() {
 		fmt.Fprintln(flags.Output(), "Usage: p2pcat [-v] [-routed] MULTIADDR PROTOCOL")
@@ -58,25 +49,36 @@ func connect() error {
 	switch err := flags.Parse(os.Args[1:]); err {
 	case nil:
 	case flag.ErrHelp:
-		return nil
+		os.Exit(0)
 	default:
 		os.Exit(2)
 	}
 
 	if flags.NArg() != 2 {
-		return fmt.Errorf("wrong number of arguments: expected <address> <protocol>")
+		fmt.Fprintln(flags.Output(), "two arguments required")
+		flags.Usage()
+		os.Exit(2)
 	}
 
 	if *verbose {
 		Info.SetOutput(os.Stderr)
 	}
 
-	target, err := multiaddr.NewMultiaddr(flags.Arg(0))
+	if err := connect(*routed, flags.Arg(0), flags.Arg(1)); err != nil {
+		Error.Fatal(err)
+	}
+}
+
+func connect(routed bool, addrstring string, protocolstring string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	target, err := multiaddr.NewMultiaddr(addrstring)
 	if err != nil {
 		return err
 	}
 
-	proto := protocol.ID(flags.Arg(1))
+	proto := protocol.ID(protocolstring)
 
 	pinfo, err := peerstore.InfoFromP2pAddr(target)
 	if err != nil {
@@ -90,7 +92,7 @@ func connect() error {
 	defer func() {
 		node.Close()
 	}()
-	if *routed {
+	if routed {
 		dhtclient, err := dht.New(ctx, node, dhtopt.Client(true))
 		if err != nil {
 			return err
