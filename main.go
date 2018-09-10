@@ -49,6 +49,10 @@ func connect() error {
 	defer cancel()
 
 	var flags flag.FlagSet
+	flags.Usage = func() {
+		fmt.Fprintln(flags.Output(), "Usage: p2pcat [-v] [-routed] MULTIADDR PROTOCOL")
+		flags.PrintDefaults()
+	}
 	routed := flags.Bool("routed", false, "enable peer routing")
 	verbose := flags.Bool("v", false, "print status messages")
 	switch err := flags.Parse(os.Args[1:]); err {
