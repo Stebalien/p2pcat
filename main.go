@@ -46,7 +46,8 @@ const bufSize = 1 << 20
 func main() {
 	var flags flag.FlagSet
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: p2pcat [-v] [-routed] -listen/MULTIADDR PROTOCOL")
+		fmt.Fprintln(flags.Output(), "Usage: p2pcat [-v] [-routed] MULTIADDR PROTOCOL")
+		fmt.Fprintln(flags.Output(), "  or:  p2pcat [-v] [-routed] -listen PROTOCOL")
 		flags.PrintDefaults()
 	}
 	listener := flags.Bool("listen", false, "listen mode")
