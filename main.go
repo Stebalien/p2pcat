@@ -10,7 +10,6 @@ import (
 	"os"
 	"sync"
 
-	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-host"
 	"github.com/libp2p/go-libp2p-kad-dht"
@@ -21,7 +20,6 @@ import (
 	"github.com/libp2p/go-libp2p-protocol"
 	rhost "github.com/libp2p/go-libp2p/p2p/host/routed"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/multiformats/go-multihash"
 )
 
 // TODO: Put this in a different package.
@@ -96,7 +94,7 @@ func listen(routed bool, protocolstring string) error {
 		node.Close()
 	}()
 	if routed {
-		dhtclient, err := dht.New(ctx, node, dhtopt.Client(false))
+		dhtclient, err := dht.New(ctx, node, dhtopt.Client(true))
 		if err != nil {
 			return err
 		}
@@ -105,12 +103,8 @@ func listen(routed bool, protocolstring string) error {
 		if err != nil {
 			return err
 		}
-		mhid, err := multihash.Cast([]byte(node.ID()))
-		if err != nil {
-			return err
-		}
 
-		go dhtclient.Provide(ctx, cid.NewCidV1(cid.Raw, mhid), true)
+		go dhtclient.Bootstrap(ctx)
 	}
 
 	var once sync.Once
