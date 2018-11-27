@@ -11,9 +11,10 @@ import (
 	"sync"
 
 	"github.com/libp2p/go-libp2p"
-	host "github.com/libp2p/go-libp2p-host"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p-host"
+	"github.com/libp2p/go-libp2p-kad-dht"
 	dhtopt "github.com/libp2p/go-libp2p-kad-dht/opts"
+	"github.com/libp2p/go-libp2p-net"
 	"github.com/libp2p/go-libp2p-peerstore"
 	pstore "github.com/libp2p/go-libp2p-peerstore"
 	"github.com/libp2p/go-libp2p-protocol"
@@ -38,12 +39,16 @@ var BootstrapAddresses = []string{
 var Info = log.New(ioutil.Discard, "I: ", 0)
 var Error = log.New(os.Stderr, "E: ", 0)
 
+const bufSize = 1 << 20
+
 func main() {
 	var flags flag.FlagSet
 	flags.Usage = func() {
 		fmt.Fprintln(flags.Output(), "Usage: p2pcat [-v] [-routed] MULTIADDR PROTOCOL")
+		fmt.Fprintln(flags.Output(), "  or:  p2pcat [-v] [-routed] -listen PROTOCOL")
 		flags.PrintDefaults()
 	}
+	listener := flags.Bool("listen", false, "listen mode")
 	routed := flags.Bool("routed", false, "enable peer routing")
 	verbose := flags.Bool("v", false, "print status messages")
 	switch err := flags.Parse(os.Args[1:]); err {
@@ -54,8 +59,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	if flags.NArg() != 2 {
-		fmt.Fprintln(flags.Output(), "two arguments required")
+	if (!*listener && flags.NArg() != 2) || (*listener && flags.NArg() != 1) {
+		fmt.Fprintln(flags.Output(), "unexpected number of arguments")
 		flags.Usage()
 		os.Exit(2)
 	}
@@ -64,9 +69,64 @@ func main() {
 		Info.SetOutput(os.Stderr)
 	}
 
-	if err := connect(*routed, flags.Arg(0), flags.Arg(1)); err != nil {
-		Error.Fatal(err)
+	if *listener {
+		if err := listen(*routed, flags.Arg(0)); err != nil {
+			Error.Fatal(err)
+		}
+	} else {
+		if err := connect(*routed, flags.Arg(0), flags.Arg(1)); err != nil {
+			Error.Fatal(err)
+		}
 	}
+}
+
+func listen(routed bool, protocolstring string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	proto := protocol.ID(protocolstring)
+
+	node, err := libp2p.New(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		node.Close()
+	}()
+	if routed {
+		dhtclient, err := dht.New(ctx, node, dhtopt.Client(true))
+		if err != nil {
+			return err
+		}
+		node = rhost.Wrap(node, dhtclient)
+		err = bootstrap(ctx, node)
+		if err != nil {
+			return err
+		}
+
+		go dhtclient.Bootstrap(ctx)
+	}
+
+	var once sync.Once
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	Error.Printf("listening on: /ipfs/%s %s", node.ID().Pretty(), protocolstring)
+
+	node.SetStreamHandler(proto, func(stream net.Stream) {
+		once.Do(func() {
+			defer wg.Done()
+
+			node.RemoveStreamHandler(proto)
+			Info.Printf("connection from: /ipfs/%s", stream.Conn().RemotePeer().Pretty())
+
+			pipe(stream)
+		})
+	})
+	wg.Wait()
+
+	return nil
 }
 
 func connect(routed bool, addrstring string, protocolstring string) error {
@@ -112,11 +172,16 @@ func connect(routed bool, addrstring string, protocolstring string) error {
 	}
 	Info.Printf("connected to: %s/ipfs/%s", s.Conn().RemoteMultiaddr(), s.Conn().RemotePeer().Pretty())
 
+	pipe(s)
+	return nil
+}
+
+func pipe(s net.Stream) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		if _, err := io.Copy(s, os.Stdin); err != nil {
+		if _, err := io.CopyBuffer(s, os.Stdin, make([]byte, bufSize)); err != nil {
 			Error.Print(err)
 		} else if err := s.Close(); err != nil {
 			s.Reset()
@@ -125,14 +190,13 @@ func connect(routed bool, addrstring string, protocolstring string) error {
 	}()
 	go func() {
 		defer wg.Done()
-		if _, err := io.Copy(os.Stdout, s); err != nil {
+		if _, err := io.CopyBuffer(os.Stdout, s, make([]byte, bufSize)); err != nil {
 			Error.Print(err)
 		} else if err := os.Stdout.Close(); err != nil {
 			s.Reset()
 		}
 	}()
 	wg.Wait()
-	return nil
 }
 
 func bootstrap(ctx context.Context, node host.Host) error {
@@ -151,7 +215,7 @@ func bootstrap(ctx context.Context, node host.Host) error {
 			done <- node.Connect(bctx, *pi)
 		}()
 	}
-	for _ = range BootstrapAddresses {
+	for range BootstrapAddresses {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
