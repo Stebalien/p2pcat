@@ -11,13 +11,13 @@ import (
 	"sync"
 
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-host"
+	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/network"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/peerstore"
+	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/libp2p/go-libp2p-kad-dht"
 	dhtopt "github.com/libp2p/go-libp2p-kad-dht/opts"
-	"github.com/libp2p/go-libp2p-net"
-	"github.com/libp2p/go-libp2p-peerstore"
-	pstore "github.com/libp2p/go-libp2p-peerstore"
-	"github.com/libp2p/go-libp2p-protocol"
 	rhost "github.com/libp2p/go-libp2p/p2p/host/routed"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -86,7 +86,7 @@ func listen(routed bool, protocolstring string) error {
 
 	proto := protocol.ID(protocolstring)
 
-	node, err := libp2p.New(ctx)
+	node, err := libp2p.New()
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func listen(routed bool, protocolstring string) error {
 
 	Error.Printf("listening on: /ipfs/%s %s", node.ID().Pretty(), protocolstring)
 
-	node.SetStreamHandler(proto, func(stream net.Stream) {
+	node.SetStreamHandler(proto, func(stream network.Stream) {
 		once.Do(func() {
 			defer wg.Done()
 
@@ -140,12 +140,12 @@ func connect(routed bool, addrstring string, protocolstring string) error {
 
 	proto := protocol.ID(protocolstring)
 
-	pinfo, err := peerstore.InfoFromP2pAddr(target)
+	ainfo, err := peer.AddrInfoFromP2pAddr(target)
 	if err != nil {
 		return err
 	}
 
-	node, err := libp2p.New(ctx, libp2p.NoListenAddrs)
+	node, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
 		return err
 	}
@@ -165,8 +165,8 @@ func connect(routed bool, addrstring string, protocolstring string) error {
 	}
 
 	Info.Printf("connecting to: %s", target)
-	node.Peerstore().AddAddrs(pinfo.ID, pinfo.Addrs, peerstore.TempAddrTTL)
-	s, err := node.NewStream(ctx, pinfo.ID, proto)
+	node.Peerstore().AddAddrs(ainfo.ID, ainfo.Addrs, peerstore.TempAddrTTL)
+	s, err := node.NewStream(ctx, ainfo.ID, proto)
 	if err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func connect(routed bool, addrstring string, protocolstring string) error {
 	return nil
 }
 
-func pipe(s net.Stream) {
+func pipe(s network.Stream) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -207,12 +207,12 @@ func bootstrap(ctx context.Context, node host.Host) error {
 
 	done := make(chan error, len(BootstrapAddresses))
 	for _, addrs := range BootstrapAddresses {
-		pi, err := pstore.InfoFromP2pAddr(multiaddr.StringCast(addrs))
+		ai, err := peer.AddrInfoFromP2pAddr(multiaddr.StringCast(addrs))
 		if err != nil {
 			panic(err)
 		}
 		go func() {
-			done <- node.Connect(bctx, *pi)
+			done <- node.Connect(bctx, *ai)
 		}()
 	}
 	for range BootstrapAddresses {
